@@ -34,9 +34,14 @@ struct Monitor_t* CrearMonitor  () {
     if (error)
       perror("pthread_mutex_init()");
 
+    error += pthread_mutex_init(&aux->contadorBuffer, NULL);
+    if (error)
+      perror("pthread_mutex_init()");
+
     pthread_cond_broadcast(&aux->condFull);
     pthread_mutex_lock(&aux->leer);
     pthread_mutex_unlock(&aux->escribir);
+    pthread_mutex_unlock(&aux->contadorBuffer);
   }
 
   return aux;
@@ -54,10 +59,12 @@ int GuardarDato (struct Monitor_t *m, Pedido* dato) {
   if (error)
     perror("pthread_cond_wait()");
   else {
-    error = CB_add(m->cbuf, dato);
+    error = CB_add(m->cbuf, dato, &m->contadorBuffer);
     if (error)
       perror("CB_add()");
+    pthread_mutex_lock(&m->contadorBuffer);
     m->readyFull = CB_isFull(m->cbuf);
+    pthread_mutex_unlock(&m->contadorBuffer);
     m->readyEmpty = 0;
     pthread_cond_signal(&m->condFull);
     pthread_cond_signal(&m->condEmpty);
@@ -89,11 +96,13 @@ int LeerDato (struct Monitor_t *m, Pedido* dato) {
   if (error)
     perror("pthread_cond_wait()");
   else {
-    error = CB_remove(m->cbuf, dato);
+    error = CB_remove(m->cbuf, dato, &m->contadorBuffer);
     if(error){
       perror("CB_remove()");
     }
+    pthread_mutex_lock(&m->contadorBuffer);
     m->readyEmpty = CB_isEmpty(m->cbuf);
+    pthread_mutex_unlock(&m->contadorBuffer);
     m->readyFull = 0;
     pthread_cond_signal(&m->condFull);
     pthread_cond_signal(&m->condEmpty);
@@ -118,8 +127,84 @@ void BorrarMonitor (struct Monitor_t *m) {
     pthread_cond_destroy(&m->condEmpty);
     pthread_mutex_destroy(&m->leer);
     pthread_mutex_destroy(&m->escribir);
+    pthread_mutex_destroy(&m->contadorBuffer);
     free(m);
   }
+}
+
+void CB_init(CB_t** cbuf, int size){
+    *cbuf = (CB_t*) malloc(sizeof(CB_t));
+    void *aux = calloc(size, sizeof(Pedido));
+    (*cbuf)->head = calloc(1, sizeof(int));
+    (*cbuf)->tail = calloc(1, sizeof(int));
+    (*cbuf)->base = aux;
+    (*cbuf)->length = calloc(1, sizeof(int));
+    *(*cbuf)->length = size;
+    (*cbuf)->count = calloc(1, sizeof(int));
+}
+
+int CB_remove(CB_t* cbuf, Pedido* data, pthread_mutex_t* cont){
+    if(!cbuf || !cbuf->base || !cbuf->head || !cbuf->tail){
+        return -1;
+    }
+    if( *cbuf->count == 0 ){
+        return -1;
+    }
+
+    Pedido *aux = ((Pedido*)cbuf->base + *cbuf->tail);
+    data->distPed = aux->distPed;
+    data->estado = aux->estado;
+    data->nroPed = aux->nroPed;
+    data->tipoPed = aux->tipoPed;
+
+    pthread_mutex_lock(cont);
+    if(*cbuf->tail == (*cbuf->length - 1)){
+        *cbuf->tail = 0;
+        *(cbuf->count)-=1; 
+    }
+    else{
+        *(cbuf->tail)+=1;
+        *(cbuf->count)-=1;
+    }
+    pthread_mutex_unlock(cont);
+    return 0;
+}
+
+int CB_add(CB_t* cbuf, Pedido* newAdd, pthread_mutex_t *cont){
+    if( !cbuf || !cbuf->base || !cbuf->head || !cbuf->tail ){
+        return -1;
+    }
+    if( *cbuf->count == (*cbuf->length) ){
+        return -1;
+    }
+    
+    Pedido *aux = ((Pedido*)cbuf->base + *cbuf->head);
+    aux->distPed = newAdd->distPed;
+    aux->estado = newAdd->estado;
+    aux->nroPed = newAdd->nroPed;
+    aux->tipoPed = newAdd->tipoPed;
+
+    pthread_mutex_lock(cont);
+    if(*(cbuf->head) == (*(cbuf->length) - 1)){
+        *(cbuf->head) = 0;
+        *(cbuf->count)+=1; 
+    }
+    else{
+        *(cbuf->head)+=1;
+        *(cbuf->count)+=1; 
+    }
+    pthread_mutex_unlock(cont);
+    return 0;
+}
+
+int CB_isEmpty(CB_t* cbuf){
+    if(*(cbuf->count) == 0) return 1;
+    else return 0;
+}
+
+int CB_isFull(CB_t* cbuf){
+    if(*(cbuf->count) == *(cbuf->length)) return 1;
+    else return 0;
 }
 
 /*

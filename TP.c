@@ -10,7 +10,7 @@
 #include <sys/mman.h>
 
 #include "MonitoresSimple.h"
-#include "circbuf.h"
+
 
 int isFin = 0; //Como no podemos pasar parametros a los signal handlers, nos vimos obligados a crear una variable global
 
