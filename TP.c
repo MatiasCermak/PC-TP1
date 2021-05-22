@@ -265,15 +265,15 @@ void *delivery(void *tmp)
         {
             pthread_exit(NULL);
         }
-        del->pedActual->estado = 4;
-        sleep(del->pedActual->distPed);
         del->pedActual->estado = 5;
+        sleep(del->pedActual->distPed);
+        del->pedActual->estado = 6;
         sem_wait(del->semW);
         del->pedMemComp->distPed = del->pedActual->distPed;
         del->pedMemComp->estado = del->pedActual->estado;
         del->pedMemComp->nroPed = del->pedActual->nroPed;
         del->pedMemComp->tipoPed = del->pedActual->tipoPed;
-        del->pedActual->estado = 6;
+        del->pedActual->estado = 7;
         sem_post(del->semR);
     }
 }
@@ -318,12 +318,12 @@ void *printOutput(void *tmp)
             printf("No inicializado");
         else
         {
-            if ((*(out->pedCoc2))->estado == 4)
-                printf("Preparando Pedido");
-            if ((*(out->pedCoc2))->estado == 5)
+            if ((*(out->pedCoc2))->estado == 2)
+                printf("Preparando pedido");
+            if ((*(out->pedCoc2))->estado == 3)
                 printf("Entregando a Delivery");
-            if ((*(out->pedCoc2))->estado == 6)
-                printf("En espera");
+            if ((*(out->pedCoc2))->estado == 4)
+                printf("Esperando pedido");
         }
         printf("\n\r");
         printf("Cocinero 3(2): ");
@@ -332,11 +332,11 @@ void *printOutput(void *tmp)
         else
         {
             if ((*(out->pedCoc3))->estado == 2)
-                printf("Preparando Pedido");
+                printf("Preparando pedido");
             if ((*(out->pedCoc3))->estado == 3)
                 printf("Entregando a Delivery");
             if ((*(out->pedCoc3))->estado == 4)
-                printf("En espera");
+                printf("Esperando pedido");
         }
         printf("\n\r");
         printf("Delivery 1(3): ");
@@ -344,11 +344,11 @@ void *printOutput(void *tmp)
             printf("No inicializado");
         else
         {
-            if ((*(out->pedDel1))->estado == 4)
-                printf("Entregado Pedido");
             if ((*(out->pedDel1))->estado == 5)
-                printf("Entregando a Encargado");
+                printf("Entregado Pedido");
             if ((*(out->pedDel1))->estado == 6)
+                printf("Entregando a Encargado");
+            if ((*(out->pedDel1))->estado == 7)
                 printf("En espera");
         }
         printf("\n\r");
@@ -357,11 +357,11 @@ void *printOutput(void *tmp)
             printf("No inicializado");
         else
         {
-            if ((*(out->pedDel2))->estado == 4)
-                printf("Entregado Pedido");
             if ((*(out->pedDel2))->estado == 5)
-                printf("Entregando a Encargado");
+                printf("Entregado Pedido");
             if ((*(out->pedDel2))->estado == 6)
+                printf("Entregando a Encargado");
+            if ((*(out->pedDel2))->estado == 7)
                 printf("En espera");
         }
         printf("\n\r");
@@ -375,14 +375,12 @@ void *takeInput(void *tmp)
 {
     int *val = (int *)tmp;
     char a;
-    // Set the terminal to raw mode
+    // Seteamos la terminal en modo raw, para que se lea el input automáticamente al apretar un botón
     while (!isFin)
     {
         system("stty raw");
         a = getchar();
-        system("stty cooked");
         *val = atoi(&a);
-        fflush(stdin);
         if (a == '.')
         {
             system("stty cooked");
@@ -638,6 +636,7 @@ int FuncionesDeEncargado(Encargado *enc, Telefono *tel, int *op)
             {
                 totalEarned += enc->pedMemComp1->tipoPed * 10;
                 sem_post(enc->semW1);
+
             }
             *op = 0;
             break;
