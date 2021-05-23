@@ -602,6 +602,8 @@ int FuncionesDeEncargado(Encargado *enc, Telefono *tel, int *op)
 {
     int totalEarned = 0;
     int fin = 1;
+    int aux1 = -1;
+    int aux2 = -1;
 
     while (fin)
     {
@@ -628,7 +630,9 @@ int FuncionesDeEncargado(Encargado *enc, Telefono *tel, int *op)
             *op = 0;
             break;
         case 2:
+            if(enc->pedActual->nroPed == aux1) break;
             GuardarDato(enc->monEC, enc->pedActual);
+            aux1 = enc->pedActual->nroPed;
             *op = 0;
             break;
         case 3:
