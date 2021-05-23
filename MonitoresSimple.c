@@ -151,13 +151,14 @@ int CB_remove(CB_t* cbuf, Pedido* data, pthread_mutex_t* cont){
         return -1;
     }
 
+    pthread_mutex_lock(cont);
     Pedido *aux = ((Pedido*)cbuf->base + *cbuf->tail);
     data->distPed = aux->distPed;
     data->estado = aux->estado;
     data->nroPed = aux->nroPed;
     data->tipoPed = aux->tipoPed;
 
-    pthread_mutex_lock(cont);
+    
     if(*cbuf->tail == (*cbuf->length - 1)){
         *cbuf->tail = 0;
         *(cbuf->count)-=1; 
@@ -178,13 +179,14 @@ int CB_add(CB_t* cbuf, Pedido* newAdd, pthread_mutex_t *cont){
         return -1;
     }
     
+    pthread_mutex_lock(cont);
     Pedido *aux = ((Pedido*)cbuf->base + *cbuf->head);
     aux->distPed = newAdd->distPed;
     aux->estado = newAdd->estado;
     aux->nroPed = newAdd->nroPed;
     aux->tipoPed = newAdd->tipoPed;
 
-    pthread_mutex_lock(cont);
+    
     if(*(cbuf->head) == (*(cbuf->length) - 1)){
         *(cbuf->head) = 0;
         *(cbuf->count)+=1; 
