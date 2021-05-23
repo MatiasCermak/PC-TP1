@@ -9,7 +9,7 @@
 #include <sys/types.h>
 #include <sys/mman.h>
 
-#include "MonitoresSimple.h"
+#include "monitorbuffer.h"
 
 
 int isFin = 0; //Como no podemos pasar parametros a los signal handlers, nos vimos obligados a crear una variable global
@@ -21,12 +21,17 @@ typedef struct
     Pedido *pedActual, *pedMemComp1, *pedMemComp2;
     struct Monitor_t *monEC; //Monitor encargado-cocinero
     sem_t *semW1, *semR1, *semW2, *semR2;
+
 } Encargado;
+
+typedef struct {
+    pthread_mutex_t *mtxEnc;
+    int *op;
+} Input;
 
 typedef struct
 {
     pthread_mutex_t *mtxTel;
-    pthread_mutex_t *mtxEnc;
     Pedido *pedActual;
     int *timer;
 } Telefono;
@@ -64,7 +69,7 @@ int crearSemaforos(Encargado *);
 int setTiempo();
 int crearMemoriaCompartida(Encargado *, int *, int *);
 int liberarMemoria(Encargado *, int *, int *);
-int FuncionesDeEncargado(Encargado *, Telefono *, int *);
+int funcionesDelEncargado(Encargado *, Telefono *, int *);
 
 int main(int argc, char *argv[])
 {
@@ -77,6 +82,7 @@ int main(int argc, char *argv[])
     Telefono tel;
     Cocinero coc1, coc2, coc3;
     Delivery del1, del2;
+    Input in;
     Output out;
 
     //Asignación de pedidos a la variable out
@@ -93,6 +99,9 @@ int main(int argc, char *argv[])
     coc1.last = &aux;
     coc2.last = &aux;
     coc3.last = &aux;
+
+    //Asignacion de la variable de selección al struct de input
+    in.op = &optionSelected;
 
     // Creación de semáforos y asignación.
     error = crearSemaforos(&enc);
@@ -131,7 +140,7 @@ int main(int argc, char *argv[])
     }
 
     tel.mtxTel = enc.mtxTel;
-    tel.mtxEnc = enc.mtxEnc;
+    in.mtxEnc = enc.mtxEnc;
     coc2.mtxVarLast = coc1.mtxVarLast;
     coc3.mtxVarLast = coc1.mtxVarLast;
 
@@ -156,16 +165,16 @@ int main(int argc, char *argv[])
     //Creación de hilos e inicialización
     threads = (pthread_t *)calloc(8, sizeof(pthread_t));
     pthread_create(&threads[0], NULL, telefono, &tel);
+    pthread_create(&threads[3], NULL, cocinero, &coc3);
     pthread_create(&threads[1], NULL, cocinero, &coc1);
     pthread_create(&threads[2], NULL, cocinero, &coc2);
-    pthread_create(&threads[3], NULL, cocinero, &coc3);
     pthread_create(&threads[4], NULL, delivery, &del1);
     pthread_create(&threads[5], NULL, delivery, &del2);
     pthread_create(&threads[6], NULL, printOutput, &out);
-    pthread_create(&threads[7], NULL, takeInput, &optionSelected);
+    pthread_create(&threads[7], NULL, takeInput, &in);
 
     //Implementación de encargado
-    totalEarned = FuncionesDeEncargado(&enc, &tel, &optionSelected);
+    totalEarned = funcionesDelEncargado(&enc, &tel, &optionSelected);
 
     pthread_join(threads[4], NULL);
     pthread_join(threads[5], NULL);
@@ -263,6 +272,12 @@ void *delivery(void *tmp)
         LeerDato(del->monCD, del->pedActual);
         if (del->pedActual->estado == -2)
         {
+            sem_wait(del->semW);
+                del->pedMemComp->distPed = del->pedActual->distPed;
+                del->pedMemComp->estado = del->pedActual->estado;
+                del->pedMemComp->nroPed = del->pedActual->nroPed;
+                del->pedMemComp->tipoPed = 0;
+            sem_post(del->semR);
             pthread_exit(NULL);
         }
         del->pedActual->estado = 5;
@@ -281,11 +296,13 @@ void *delivery(void *tmp)
 void *printOutput(void *tmp)
 {
     Output *out = (Output *)tmp;
+    int fin1 = 1;
+    int fin2 = 1; 
     int conteo = 1;
-    while (!isFin)
+    while (fin1 || fin2)
     {
         system("clear");
-        printf("\t\t\tTiempo elapsado: %i\n\r", conteo);
+        printf("\t\t\tTiempo atendiendo pedidos: %i\n\r", conteo);
         printf("1) Atender\n\r2) Entregar pedido a cocinero\n\r3) Recolectar dinero delivery 1\n\r4) Recolectar dinero delivery 2\n\r");
         printf("Telefono(1): ");
         if (!(*(out->pedTel)))
@@ -350,6 +367,8 @@ void *printOutput(void *tmp)
                 printf("Entregando a Encargado");
             if ((*(out->pedDel1))->estado == 7)
                 printf("En espera");
+            if ((*(out->pedDel1))->estado == -2)
+                fin1 = 0;
         }
         printf("\n\r");
         printf("Delivery 2(4): ");
@@ -363,6 +382,8 @@ void *printOutput(void *tmp)
                 printf("Entregando a Encargado");
             if ((*(out->pedDel2))->estado == 7)
                 printf("En espera");
+            if ((*(out->pedDel2))->estado == -2)
+                fin2 = 0;
         }
         printf("\n\r");
         conteo += 1;
@@ -373,22 +394,106 @@ void *printOutput(void *tmp)
 
 void *takeInput(void *tmp)
 {
-    int *val = (int *)tmp;
+    Input *val = (Input *)tmp;
     char a;
+    int fin = 1;
     // Seteamos la terminal en modo raw, para que se lea el input automáticamente al apretar un botón
-    while (!isFin)
+    while (fin)
     {
-        system("stty raw");
-        a = getchar();
-        *val = atoi(&a);
-        if (a == '.')
-        {
-            system("stty cooked");
-            raise(SIGALRM);
-            pthread_exit(NULL);
+        if(*(val->op) == -2) {
+           fin = 0;
+           continue; 
+        }
+        if(!pthread_mutex_trylock(val->mtxEnc)){
+            system("stty raw");
+            a = getchar();
+            *(val->op) = atoi(&a);
+            if (a == '.')
+            {
+                system("stty cooked");
+                raise(SIGALRM);
+            }
+            pthread_mutex_unlock(val->mtxEnc);
         }
     }
     pthread_exit(NULL);
+    
+}
+
+int funcionesDelEncargado(Encargado *enc, Telefono *tel, int *op)
+{
+    int totalEarned = 0;
+    int fin1 = 1;
+    int fin2 = 2;
+    int aux1 = -1;
+    int aux2 = -1;
+
+    while (fin1 || fin2)
+    {
+        if (tel->pedActual)
+        {
+            if (tel->pedActual->estado == -2)
+            {
+                enc->pedActual = tel->pedActual;
+                for (int i = 0; i < 3; i++)
+                {
+                    GuardarDato(enc->monEC, enc->pedActual);
+                }
+            }
+        }
+        
+        switch (*op)
+        {
+        case 1:
+            if(tel->pedActual->nroPed == aux1) break;
+            if(tel->pedActual->estado == -1) break;
+            if(tel->pedActual->estado != 0) break;
+            pthread_mutex_lock(tel->mtxTel);
+            enc->pedActual = tel->pedActual;
+            enc->pedActual->estado = 1;
+            aux1 = tel->pedActual->nroPed;
+            pthread_mutex_unlock(tel->mtxTel);
+            *op = 0;
+            break;
+        case 2:
+            if(enc->pedActual->nroPed == aux2) break;
+            GuardarDato(enc->monEC, enc->pedActual);
+            aux2 = enc->pedActual->nroPed;
+            *op = 0;
+            break;
+        case 3:
+            if (sem_trywait(enc->semR1))
+            {  
+                if(enc->pedMemComp1->estado == -2) {
+                    fin1 = 0;
+                    break;
+                }
+                enc->pedMemComp1->estado = 0;
+                totalEarned += enc->pedMemComp1->tipoPed * 10;
+                sem_post(enc->semW1);
+            }
+            *op = 0;
+            break;
+        case 4:
+            if (sem_trywait(enc->semR2))
+            {
+                if(enc->pedMemComp2->estado == -2) {
+                    fin2 = 0;
+                    break;
+                }
+                enc->pedMemComp2->estado = 0;
+                totalEarned += enc->pedMemComp2->tipoPed * 10;
+                sem_post(enc->semW2);
+            }
+            *op = 0;
+            break;
+        default:
+            break;
+        }
+    }
+    pthread_mutex_lock(enc->mtxEnc);
+    *op = -2;
+    return totalEarned;
 }
 
 void startTermination(int sig)
@@ -596,65 +701,4 @@ int liberarMemoria(Encargado *enc, int *mem1, int *mem2)
         }
     }
     return error;
-}
-
-int FuncionesDeEncargado(Encargado *enc, Telefono *tel, int *op)
-{
-    int totalEarned = 0;
-    int fin = 1;
-    int aux1 = -1;
-    int aux2 = -1;
-
-    while (fin)
-    {
-        if (tel->pedActual)
-        {
-            if (tel->pedActual->estado == -2)
-            {
-                enc->pedActual = tel->pedActual;
-                for (int i = 0; i < 3; i++)
-                {
-                    GuardarDato(enc->monEC, enc->pedActual);
-                }
-                fin = 0;
-            }
-        }
-
-        switch (*op)
-        {
-        case 1:
-            pthread_mutex_lock(tel->mtxTel);
-            enc->pedActual = tel->pedActual;
-            enc->pedActual->estado = 1;
-            pthread_mutex_unlock(tel->mtxTel);
-            *op = 0;
-            break;
-        case 2:
-            if(enc->pedActual->nroPed == aux1) break;
-            GuardarDato(enc->monEC, enc->pedActual);
-            aux1 = enc->pedActual->nroPed;
-            *op = 0;
-            break;
-        case 3:
-            if (sem_trywait(enc->semR1))
-            {
-                totalEarned += enc->pedMemComp1->tipoPed * 10;
-                sem_post(enc->semW1);
-
-            }
-            *op = 0;
-            break;
-        case 4:
-            if (sem_trywait(enc->semR2))
-            {
-                totalEarned += enc->pedMemComp2->tipoPed * 10;
-                sem_post(enc->semW2);
-            }
-            *op = 0;
-            break;
-        default:
-            break;
-        }
-    }
-    return totalEarned;
 }
